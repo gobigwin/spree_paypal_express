@@ -74,7 +74,9 @@ module Spree
                                     :payer_country => @ppx_details.params["payer_country"],
                                     :payer_status => @ppx_details.params["payer_status"])
 
-        @order.special_instructions = @ppx_details.params["note"]
+        if Spree::Config[:shipping_instructions]
+          @order.special_instructions = @ppx_details.params["note"]
+        end
 
         unless payment_method.preferred_no_shipping
           ship_address = @ppx_details.address
@@ -204,17 +206,22 @@ module Spree
       return unless (params[:state] == "payment")
       return unless params[:order][:payments_attributes]
 
-      if @order.update_attributes(object_params)
+      payment_method = Spree::PaymentMethod.find(params[:order][:payments_attributes].first[:payment_method_id])
+      return unless payment_method.kind_of?(Spree::BillingIntegration::PaypalExpress) || payment_method.kind_of?(Spree::BillingIntegration::PaypalExpressUk)
+
+      update_params = object_params.dup
+      update_params.delete(:payments_attributes)
+      if @order.update_attributes(update_params)
         fire_event('spree.checkout.update')
         render :edit and return unless apply_coupon_code
       end
 
       load_order
-      payment_method = Spree::PaymentMethod.find(params[:order][:payments_attributes].first[:payment_method_id])
-
-      if payment_method.kind_of?(Spree::BillingIntegration::PaypalExpress) || payment_method.kind_of?(Spree::BillingIntegration::PaypalExpressUk)
-        redirect_to(paypal_payment_order_checkout_url(@order, :payment_method_id => payment_method.id)) and return
+      if not @order.errors.empty?
+         render :edit and return
       end
+
+      redirect_to(paypal_payment_order_checkout_url(@order, :payment_method_id => payment_method.id)) and return
     end
 
     def fixed_opts
@@ -239,7 +246,7 @@ module Spree
         :header_background_color => "ffffff",
         :header_border_color     => "ffffff",
         :header_image            => chosen_image,
-        :allow_note              => true,
+        :allow_note              => Spree::Config[:shipping_instructions],
         :locale                  => user_locale,
         :req_confirm_shipping    => false,   # for security, might make an option later
         :user_action             => user_action
@@ -436,11 +443,15 @@ module Spree
         text = response.to_s
       end
 
-      # Parameterize text for i18n key
-      text = text.parameterize(sep = '_')
-      msg = "#{I18n.t('gateway_error')}: #{I18n.t(text)}"
-      logger.error(msg)
-      flash[:error] = msg
+      if I18n.locale == :en
+        text = "#{I18n.t('gateway_error')}: #{text}"
+      else
+        # Parameterize text for i18n key
+        text = text.parameterize(sep = '_')
+        text = "#{I18n.t('gateway_error')}: #{I18n.t(text)}"
+      end
+      logger.error text
+      flash[:error] = text
     end
 
     # create the gateway from the supplied options
