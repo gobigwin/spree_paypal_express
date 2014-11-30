@@ -282,13 +282,24 @@ module Spree
 
       credits = order.adjustments.eligible.map do |credit|
         if credit.amount < 0.00
-          { :name        => credit.label,
-            :description => credit.label,
-            :sku         => credit.id,
-            :quantity    => 1,
-            :amount      => (credit.amount*100).to_i }
+          unless credit.originator_type == 'Spree::PromotionAction' && credit.originator.calculator_type == 'Spree::Calculator::FreeShipping'
+            { :name        => credit.label,
+              :description => credit.label,
+              :sku         => credit.id,
+              :quantity    => 1,
+              :amount      => (credit.amount*100).to_i }
+          end
         end
       end
+
+      shipping_discount = order.adjustments.promotion.eligible.map do |credit|
+        if credit.originator.calculator_type == 'Spree::Calculator::FreeShipping'
+          (credit.amount*100).to_i
+        else
+          0
+        end
+      end.sum
+      shipping_discount ||= 0
 
       credits_total = 0
       credits.compact!
@@ -300,10 +311,10 @@ module Spree
       if payment_method.preferred_cart_checkout and (order.shipping_method.blank? or order.ship_total == 0)
         shipping_cost  = shipping_options[:shipping_options].first[:amount]
         order_total    = (order.total * 100 + (shipping_cost)).to_i
-        shipping_total = (shipping_cost).to_i
+        shipping_total = (shipping_cost + shipping_discount).to_i
       else
         order_total    = (order.total * 100).to_i
-        shipping_total = (order.ship_total * 100).to_i
+        shipping_total = (order.ship_total * 100 + shipping_discount).to_i
       end
 
       opts = { :return_url        => paypal_confirm_order_checkout_url(order, :payment_method_id => payment_method_id),
